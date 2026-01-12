@@ -23,7 +23,7 @@ jobs:
       - name: Add upstream and merge
         run: |
           # Add upstream remote if it doesn't exist
-          # git remote add upstream https://github.com/miniflux/v2.git 2>/dev/null || true
+          git remote add upstream https://github.com/miniflux/v2.git 2>/dev/null || true
 
           # Fetch latest upstream
           git fetch upstream main

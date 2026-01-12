@@ -1,3 +1,11 @@
+# fork process
+```sh
+git fetch upstream
+git checkout main
+git merge upstream/main
+```
+---
+
 Miniflux 2
 ==========
 

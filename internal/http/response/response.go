@@ -11,4 +11,5 @@ package response // import "miniflux.app/v2/internal/http/response"
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/form-action
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/sandbox
 // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/default-src
-const ContentSecurityPolicyForUntrustedContent = `default-src 'none'; form-action 'none'; sandbox;`
+// const ContentSecurityPolicyForUntrustedContent = `default-src 'none'; form-action 'none'; sandbox;`
+const ContentSecurityPolicyForUntrustedContent = ``

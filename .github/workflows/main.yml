@@ -1,0 +1,78 @@
+name: main
+on:
+  schedule:
+    - cron: "0 10 * * 0" # Run weekly
+  push:
+    branches:
+      - main
+permissions:
+  contents: write # to push back to your repo
+  packages: write # to push to GHCR (with your PAT)
+jobs:
+  docker-images:
+    runs-on: ubuntu-latest
+    steps:
+      # https://github.com/marketplace/actions/checkout
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+      - name: Add upstream and merge
+        run: |
+          # Add upstream remote if it doesn't exist
+          # git remote add upstream https://github.com/miniflux/v2.git 2>/dev/null || true
+
+          # Fetch latest upstream
+          git fetch upstream main
+
+          # Make sure we're on main
+          git checkout main
+
+          # Merge upstream/main into our main
+          # If there is a conflict, fail so you can resolve it manually
+          set -e
+          git merge --no-edit upstream/main || {
+            echo "::error::Merge conflict with upstream. Please resolve manually.";
+            exit 1
+          }
+      - name: Remove upstream .github folder except our workflow
+        run: |
+          # Remove upstream actions/etc if present
+          if [ -d ".github" ]; then
+            # Preserve your main workflow only
+            mkdir -p .github-tmp/workflows
+            if [ -f ".github/workflows/main.yml" ]; then
+              cp .github/workflows/main.yml .github-tmp/workflows/
+            fi
+
+            rm -rf .github
+
+            mkdir -p .github/workflows
+            cp .github-tmp/workflows/main.yml .github/workflows/ 2>/dev/null || true
+            rm -rf .github-tmp
+          fi
+
+          git add .github
+          if ! git diff --cached --quiet; then
+            git commit -m "Remove upstream .github folder (retain main.yml)"
+          fi
+      # https://github.com/marketplace/actions/docker-setup-docker
+      - uses: docker/setup-docker-action@v4
+      # login to github, build and push image
+      - name: Build and push image
+        run: |
+          docker build -t ghcr.io/codabool/miniflux:latest --file ./packaging/docker/distroless/Dockerfile .
+          echo ${{ secrets.GH_TOKEN }} | docker login ghcr.io -u codabool --password-stdin
+          docker push ghcr.io/codabool/miniflux:latest
+      - name: Push updated main branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          if ! git diff --quiet origin/main..HEAD; then
+            git push origin HEAD:main
+          else
+            echo "No new commits to push; main is up to date."
+          fi

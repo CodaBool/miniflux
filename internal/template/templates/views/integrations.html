@@ -618,7 +618,8 @@
             </label>
 
             <label for="form-slack-webhook-link">{{ t "form.integration.slack_webhook_link" }}</label>
-            <input type="url" name="slack_webhook_link" id="form-slack-webhook-link" value="{{ .form.SlackWebhookLink }}" placeholder="https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX" spellcheck="false">
+            <input type="url" name="slack_webhook_link" id="form-slack-webhook-link" value="{{ .form.SlackWebhookLink }}" placeholder="SLACK_WEBHOOK_URL_HERE" spellcheck="false">
+
 
             <div class="buttons">
                 <button type="submit" class="button button-primary" data-label-loading="{{ t "form.submit.saving" }}">{{ t "action.update" }}</button>

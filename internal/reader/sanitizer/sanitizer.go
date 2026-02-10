@@ -4,6 +4,7 @@
 package sanitizer // import "miniflux.app/v2/internal/reader/sanitizer"
 
 import (
+	"errors"
 	"net/url"
 	"slices"
 	"strconv"
@@ -14,6 +15,10 @@ import (
 	"miniflux.app/v2/internal/urllib"
 
 	"golang.org/x/net/html"
+)
+
+const (
+	maxDepth = 512 // The maximum allowed depths for nested HTML tags, same was WebKit.
 )
 
 var (
@@ -129,14 +134,16 @@ var (
 
 	blockedResourceURLSubstrings = []string{
 		"api.flattr.com",
+		"www.facebook.com/sharer.php",
 		"feeds.feedburner.com",
 		"feedsportal.com",
+		"linkedin.com/shareArticle",
 		"pinterest.com/pin/create/button/",
 		"stats.wordpress.com",
 		"twitter.com/intent/tweet",
 		"twitter.com/share",
-		"facebook.com/sharer.php",
-		"linkedin.com/shareArticle",
+		"x.com/intent/tweet",
+		"x.com/share",
 	}
 
 	// See https://www.iana.org/assignments/uri-schemes/uri-schemes.xhtml
@@ -231,7 +238,10 @@ func SanitizeHTML(baseURL, rawHTML string, sanitizerOptions *SanitizerOptions) s
 	// Errors are a non-issue, so they're handled in filterAndRenderHTML
 	parsedBaseUrl, _ := url.Parse(baseURL)
 	for c := body.FirstChild; c != nil; c = c.NextSibling {
-		filterAndRenderHTML(&buffer, c, parsedBaseUrl, sanitizerOptions)
+		// -2 because of `<html><body>…`
+		if err := filterAndRenderHTML(&buffer, c, parsedBaseUrl, sanitizerOptions, maxDepth-2); err != nil {
+			return ""
+		}
 	}
 
 	return buffer.String()
@@ -255,9 +265,13 @@ func findAllowedIframeSourceDomain(iframeSourceURL string) (string, bool) {
 	return "", false
 }
 
-func filterAndRenderHTML(buf *strings.Builder, n *html.Node, parsedBaseUrl *url.URL, sanitizerOptions *SanitizerOptions) {
+func filterAndRenderHTML(buf *strings.Builder, n *html.Node, parsedBaseUrl *url.URL, sanitizerOptions *SanitizerOptions, depth uint) error {
 	if n == nil {
-		return
+		return nil
+	}
+
+	if depth == 0 {
+		return errors.New("maximum nested tags limit reached")
 	}
 
 	switch n.Type {
@@ -266,36 +280,34 @@ func filterAndRenderHTML(buf *strings.Builder, n *html.Node, parsedBaseUrl *url.
 	case html.ElementNode:
 		tag := strings.ToLower(n.Data)
 		if shouldIgnoreTag(n, tag) {
-			return
+			return nil
 		}
 
 		_, ok := allowedHTMLTagsAndAttributes[tag]
 		if !ok {
 			// The tag isn't allowed, but we're still interested in its content
-			filterAndRenderHTMLChildren(buf, n, parsedBaseUrl, sanitizerOptions)
-			return
+			return filterAndRenderHTMLChildren(buf, n, parsedBaseUrl, sanitizerOptions, depth-1)
 		}
 
-		attrNames, htmlAttributes := sanitizeAttributes(parsedBaseUrl, tag, n.Attr, sanitizerOptions)
-		if !hasRequiredAttributes(tag, attrNames) {
+		htmlAttributes, hasAllRequiredAttributes := sanitizeAttributes(parsedBaseUrl, tag, n.Attr, sanitizerOptions)
+		if !hasAllRequiredAttributes {
 			// The tag doesn't have every required attributes but we're still interested in its content
-			filterAndRenderHTMLChildren(buf, n, parsedBaseUrl, sanitizerOptions)
-			return
+			return filterAndRenderHTMLChildren(buf, n, parsedBaseUrl, sanitizerOptions, depth-1)
 		}
 		buf.WriteString("<")
 		buf.WriteString(n.Data)
-		if len(attrNames) > 0 {
+		if len(htmlAttributes) > 0 {
 			buf.WriteString(" " + htmlAttributes)
 		}
 		buf.WriteString(">")
 
 		if isSelfContainedTag(tag) {
-			return
+			return nil
 		}
 
 		if tag != "iframe" {
 			// iframes aren't allowed to have child nodes.
-			filterAndRenderHTMLChildren(buf, n, parsedBaseUrl, sanitizerOptions)
+			filterAndRenderHTMLChildren(buf, n, parsedBaseUrl, sanitizerOptions, depth-1)
 		}
 
 		buf.WriteString("</")
@@ -303,45 +315,42 @@ func filterAndRenderHTML(buf *strings.Builder, n *html.Node, parsedBaseUrl *url.
 		buf.WriteString(">")
 	default:
 	}
+	return nil
 }
 
-func filterAndRenderHTMLChildren(buf *strings.Builder, n *html.Node, parsedBaseUrl *url.URL, sanitizerOptions *SanitizerOptions) {
+func filterAndRenderHTMLChildren(buf *strings.Builder, n *html.Node, parsedBaseUrl *url.URL, sanitizerOptions *SanitizerOptions, depth uint) error {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		filterAndRenderHTML(buf, c, parsedBaseUrl, sanitizerOptions)
+		if err := filterAndRenderHTML(buf, c, parsedBaseUrl, sanitizerOptions, depth); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
-func getExtraAttributes(tagName string, isYouTubeEmbed bool, sanitizerOptions *SanitizerOptions) ([]string, []string) {
+func getExtraAttributes(tagName string, isYouTubeEmbed bool, sanitizerOptions *SanitizerOptions) []string {
 	switch tagName {
 	case "a":
-		attributeNames := []string{"rel", "referrerpolicy"}
 		htmlAttributes := []string{`rel="noopener noreferrer"`, `referrerpolicy="no-referrer"`}
 		if sanitizerOptions.OpenLinksInNewTab {
-			attributeNames = append(attributeNames, "target")
 			htmlAttributes = append(htmlAttributes, `target="_blank"`)
 		}
-		return attributeNames, htmlAttributes
+		return htmlAttributes
 	case "video", "audio":
-		return []string{"controls"}, []string{"controls"}
+		return []string{"controls"}
 	case "iframe":
-		extraAttrNames := []string{}
-		extraHTMLAttributes := []string{}
+		extraHTMLAttributes := []string{`sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"`, `loading="lazy"`}
 
 		// Note: the referrerpolicy seems to be required to avoid YouTube error 153 video player configuration error
 		// See https://developers.google.com/youtube/terms/required-minimum-functionality#embedded-player-api-client-identity
 		if isYouTubeEmbed {
-			extraAttrNames = append(extraAttrNames, "referrerpolicy")
 			extraHTMLAttributes = append(extraHTMLAttributes, `referrerpolicy="strict-origin-when-cross-origin"`)
 		}
 
-		extraAttrNames = append(extraAttrNames, "sandbox", "loading")
-		extraHTMLAttributes = append(extraHTMLAttributes, `sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"`, `loading="lazy"`)
-
-		return extraAttrNames, extraHTMLAttributes
+		return extraHTMLAttributes
 	case "img":
-		return []string{"loading"}, []string{`loading="lazy"`}
+		return []string{`loading="lazy"`}
 	default:
-		return nil, nil
+		return nil
 	}
 }
 
@@ -499,18 +508,15 @@ func rewriteIframeURL(link string) string {
 	return link
 }
 
-func sanitizeAttributes(parsedBaseUrl *url.URL, tagName string, attributes []html.Attribute, sanitizerOptions *SanitizerOptions) ([]string, string) {
+func sanitizeAttributes(parsedBaseUrl *url.URL, tagName string, attributes []html.Attribute, sanitizerOptions *SanitizerOptions) (string, bool) {
 	htmlAttrs := make([]string, 0, len(attributes))
 	attrNames := make([]string, 0, len(attributes))
 
 	var isAnchorLink bool
 	var isYouTubeEmbed bool
 
-	allowedAttributes, ok := allowedHTMLTagsAndAttributes[tagName]
-	if !ok {
-		// This should never happen, as the tag was validated in the caller of `sanitizeAttributes`
-		return []string{}, ""
-	}
+	// We know the element is present, as the tag was validated in the caller of `sanitizeAttributes`
+	allowedAttributes := allowedHTMLTagsAndAttributes[tagName]
 
 	for _, attribute := range attributes {
 		if !slices.Contains(allowedAttributes, attribute.Key) {
@@ -574,13 +580,17 @@ func sanitizeAttributes(parsedBaseUrl *url.URL, tagName string, attributes []htm
 				value = attribute.Val
 				isAnchorLink = true
 			default:
+				if isBlockedResource(value) {
+					continue
+				}
+
 				var err error
 				value, err = urllib.ResolveToAbsoluteURLWithParsedBaseURL(parsedBaseUrl, value)
 				if err != nil {
 					continue
 				}
 
-				if !hasValidURIScheme(value) || isBlockedResource(value) {
+				if !hasValidURIScheme(value) {
 					continue
 				}
 
@@ -596,15 +606,15 @@ func sanitizeAttributes(parsedBaseUrl *url.URL, tagName string, attributes []htm
 		htmlAttrs = append(htmlAttrs, attribute.Key+`="`+html.EscapeString(value)+`"`)
 	}
 
-	if !isAnchorLink {
-		extraAttrNames, extraHTMLAttributes := getExtraAttributes(tagName, isYouTubeEmbed, sanitizerOptions)
-		if len(extraAttrNames) > 0 {
-			attrNames = append(attrNames, extraAttrNames...)
-			htmlAttrs = append(htmlAttrs, extraHTMLAttributes...)
-		}
+	if !hasRequiredAttributes(tagName, attrNames) {
+		return "", false
 	}
 
-	return attrNames, strings.Join(htmlAttrs, " ")
+	if !isAnchorLink {
+		htmlAttrs = append(htmlAttrs, getExtraAttributes(tagName, isYouTubeEmbed, sanitizerOptions)...)
+	}
+
+	return strings.Join(htmlAttrs, " "), true
 }
 
 func sanitizeSrcsetAttr(parsedBaseURL *url.URL, value string) string {

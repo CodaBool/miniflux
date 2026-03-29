@@ -31,13 +31,19 @@ jobs:
           # Make sure we're on main
           git checkout main
 
-          # Merge upstream/main into our main
-          # If there is a conflict, fail so you can resolve it manually
-          set -e
-          git merge --no-edit upstream/main || {
-            echo "::error::Merge conflict with upstream. Please resolve manually.";
-            exit 1
-          }
+          if ! git merge --no-edit upstream/main; then
+            echo "Merge hit conflicts. Keeping local workflow setup and retrying."
+
+            # Keep our version of workflow dir, then remove everything except main.yml
+            git checkout --ours .github/workflows || true
+            find ./.github/workflows -type f ! -name "main.yml" -delete
+            git add .github/workflows
+
+            git commit -m "Resolve workflow merge conflicts by keeping local workflows" || {
+              echo "::error::Merge conflict could not be resolved automatically."
+              exit 1
+            }
+          fi
       - name: Remove upstream .github folder except our workflow
         run: |
           # Remove upstream actions/etc if present

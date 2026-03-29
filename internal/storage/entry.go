@@ -17,10 +17,10 @@ import (
 )
 
 // CountAllEntries returns the number of entries for each status in the database.
-func (s *Storage) CountAllEntries() map[string]int64 {
+func (s *Storage) CountAllEntries() (map[string]int64, error) {
 	rows, err := s.db.Query(`SELECT status, count(*) FROM entries GROUP BY status`)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("storage: unable to count entries: %w", err)
 	}
 	defer rows.Close()
 
@@ -41,7 +41,7 @@ func (s *Storage) CountAllEntries() map[string]int64 {
 	}
 
 	results["total"] = results[model.EntryStatusUnread] + results[model.EntryStatusRead] + results[model.EntryStatusRemoved]
-	return results
+	return results, nil
 }
 
 // CountUnreadEntries returns the number of unread entries.
@@ -458,7 +458,9 @@ func (s *Storage) ArchiveEntries(status string, interval time.Duration, limit in
 					share_code='' AND
 					created_at < now () - $3::interval
 				ORDER BY
-					created_at ASC LIMIT $4
+					created_at ASC
+				FOR UPDATE SKIP LOCKED
+				LIMIT $4
 				)
 	`
 

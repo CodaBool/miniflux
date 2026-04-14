@@ -52,6 +52,9 @@ jobs:
             # Stage directory state
             git add .github/workflows 2>/dev/null || true
 
+            # remove dependabot conflict by keeping local delete
+            git rm -f .github/dependabot.yml 2>/dev/null || true
+
             # Fail if unresolved conflicts remain anywhere
             remaining="$(git diff --name-only --diff-filter=U)"
             if [ -n "$remaining" ]; then

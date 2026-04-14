@@ -22,37 +22,59 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
       - name: Add upstream and merge
         run: |
-          echo "Merge hit conflicts. Resolving workflow conflicts generically."
+          # Add upstream remote if it doesn't exist
+          git remote add upstream https://github.com/miniflux/v2.git 2>/dev/null || true
 
-          # Get all unmerged files in workflows
-          conflicts=$(git diff --name-only --diff-filter=U -- .github/workflows)
+          # Fetch latest upstream
+          git fetch upstream main
 
-          for f in $conflicts; do
-            if [[ "$(basename "$f")" != "main.yml" ]]; then
-              # Remove file (handles modify/delete conflicts correctly)
-              git rm -f "$f" 2>/dev/null || true
-            else
-              # Keep our version of main.yml if conflicted
-              git checkout --ours "$f" 2>/dev/null || true
-              git add "$f"
+          if ! git merge --no-edit upstream/main; then
+            echo "Merge hit conflicts. Resolving workflow conflicts generically."
+
+            # Resolve only conflicts inside .github/workflows
+            while IFS= read -r f; do
+              [ -z "$f" ] && continue
+
+              if [ "$(basename "$f")" = "main.yml" ]; then
+                git checkout --ours -- "$f" 2>/dev/null || true
+                git add -- "$f"
+              else
+                git rm -f -- "$f" 2>/dev/null || true
+              fi
+            done <<EOF
+          $(git diff --name-only --diff-filter=U -- .github/workflows)
+          EOF
+
+            # Remove any extra workflow files except main.yml, generically
+            find .github/workflows -type f ! -name "main.yml" -print0 2>/dev/null \
+              | xargs -0 -r git rm -f --ignore-unmatch --
+
+            # Stage directory state
+            git add .github/workflows 2>/dev/null || true
+
+            # Fail if unresolved conflicts remain anywhere
+            remaining="$(git diff --name-only --diff-filter=U)"
+            if [ -n "$remaining" ]; then
+              echo "::error::Unresolved conflicts remain:"
+              printf '%s\n' "$remaining"
+              exit 1
             fi
-          done
 
-          # Clean up any leftover non-conflicted files (future-proofing)
-          find .github/workflows -type f ! -name "main.yml" -print0 | xargs -0 -r git rm -f --ignore-unmatch
-
-          # Stage directory to ensure index is clean
-          git add .github/workflows 2>/dev/null || true
-
-          # Check if any conflicts remain anywhere
-          remaining=$(git diff --name-only --diff-filter=U)
-          if [[ -n "$remaining" ]]; then
-            echo "::error::Unresolved conflicts remain:"
-            echo "$remaining"
-            exit 1
+            # Only commit if a merge is still in progress
+            if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+              # If there's something to commit, commit it
+              if ! git diff --cached --quiet || ! git diff --quiet; then
+                git commit -m "Resolve workflow merge conflicts by keeping local workflows" || {
+                  echo "::error::Merge conflict could not be resolved automatically."
+                  exit 1
+                }
+              else
+                echo "Merge state exists but there is nothing to commit."
+              fi
+            else
+              echo "No merge in progress after resolution; nothing to commit."
+            fi
           fi
-
-          git commit -m "Resolve workflow merge conflicts by keeping local workflows"
       - name: Remove upstream .github folder except our workflow
         run: |
           # Remove upstream actions/etc if present

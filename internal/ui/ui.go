@@ -181,6 +181,15 @@ func Serve(store *storage.Storage, pool *worker.Pool) http.Handler {
 		w.Write([]byte("User-agent: *\nDisallow: /"))
 	})
 
+	cop := http.NewCrossOriginProtection()
+
+	// Allow the exact local origins you use.
+	cop.AddTrustedOrigin("http://192.168.0.25:8085")
+	cop.AddTrustedOrigin("http://localhost:8085")
+	cop.AddTrustedOrigin("http://127.0.0.1:8085")
+	
+	return cop.Handler(webSessionMiddleware.handle(csrfMiddleware.handle(mux)))
+
 	// Apply middleware chain: cross-origin protection -> web session -> CSRF validation -> handlers.
-	return http.NewCrossOriginProtection().Handler(webSessionMiddleware.handle(csrfMiddleware.handle(mux)))
+	//return http.NewCrossOriginProtection().Handler(webSessionMiddleware.handle(csrfMiddleware.handle(mux)))
 }

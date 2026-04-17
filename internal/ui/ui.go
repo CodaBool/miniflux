@@ -4,6 +4,7 @@
 package ui // import "miniflux.app/v2/internal/ui"
 
 import (
+	"net"
 	"net/http"
 	"net/url"
 	"strings"

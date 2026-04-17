@@ -1,66 +1,17 @@
+
 // SPDX-FileCopyrightText: Copyright The Miniflux Authors. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 package ui // import "miniflux.app/v2/internal/ui"
 
 import (
-	"net"
 	"net/http"
-	"net/url"
-	"strings"
 
 	"miniflux.app/v2/internal/config"
 	"miniflux.app/v2/internal/storage"
 	"miniflux.app/v2/internal/template"
 	"miniflux.app/v2/internal/worker"
 )
-
-func isAllowedLocalOrigin(origin string) bool {
-	if origin == "" {
-		return false
-	}
-
-	u, err := url.Parse(origin)
-	if err != nil {
-		return false
-	}
-
-	if u.Scheme != "http" {
-		return false
-	}
-
-	host := u.Hostname()
-	if host == "localhost" || host == "127.0.0.1" {
-		return true
-	}
-
-	ip := net.ParseIP(host)
-	return ip != nil && (ip.IsPrivate() || ip.IsLoopback())
-}
-
-func localOriginBypass(next http.Handler) http.Handler {
-	cop := http.NewCrossOriginProtection()
-	protected := cop.Handler(next)
-
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		secFetchSite := r.Header.Get("Sec-Fetch-Site")
-
-		// Keep blocking obvious cross-site requests.
-		if strings.EqualFold(secFetchSite, "cross-site") {
-			protected.ServeHTTP(w, r)
-			return
-		}
-
-		// Allow older/weird local HTTP clients where fetch metadata is missing.
-		if secFetchSite == "" && isAllowedLocalOrigin(origin) {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		protected.ServeHTTP(w, r)
-	})
-}
 
 // Serve returns an http.Handler that serves the user interface.
 // The returned handler expects the base path to be stripped from the request URL.
@@ -231,9 +182,6 @@ func Serve(store *storage.Storage, pool *worker.Pool) http.Handler {
 		w.Write([]byte("User-agent: *\nDisallow: /"))
 	})
 
-
-	return localOriginBypass(webSessionMiddleware.handle(csrfMiddleware.handle(mux)))
-
 	// Apply middleware chain: cross-origin protection -> web session -> CSRF validation -> handlers.
-	//return http.NewCrossOriginProtection().Handler(webSessionMiddleware.handle(csrfMiddleware.handle(mux)))
+	return http.NewCrossOriginProtection().Handler(webSessionMiddleware.handle(csrfMiddleware.handle(mux)))
 }

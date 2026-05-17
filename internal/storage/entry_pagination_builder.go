@@ -5,10 +5,12 @@ package storage // import "miniflux.app/v2/internal/storage"
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"github.com/lib/pq"
 	"miniflux.app/v2/internal/model"
 )
 
@@ -149,7 +151,7 @@ func (e *entryPaginationBuilder) getPrevNextID(tx *sql.Tx) (prevID int64, nextID
 	var pID, nID sql.NullInt64
 	err = tx.QueryRow(query, e.args...).Scan(&pID, &nID)
 	switch {
-	case err == sql.ErrNoRows:
+	case errors.Is(err, sql.ErrNoRows):
 		return 0, 0, nil
 	case err != nil:
 		return 0, 0, fmt.Errorf("entry pagination: %v", err)
@@ -175,7 +177,7 @@ func (e *entryPaginationBuilder) getEntry(tx *sql.Tx, entryID int64) (*model.Ent
 	)
 
 	switch {
-	case err == sql.ErrNoRows:
+	case errors.Is(err, sql.ErrNoRows):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("fetching sibling entry: %v", err)
@@ -191,7 +193,7 @@ func NewEntryPaginationBuilder(store *Storage, userID, entryID int64, order, dir
 		args:       []any{userID},
 		conditions: []string{"e.user_id = $1"},
 		entryID:    entryID,
-		order:      order,
+		order:      pq.QuoteIdentifier(order),
 		direction:  direction,
 	}
 }

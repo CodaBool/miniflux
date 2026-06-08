@@ -1,6 +1,7 @@
 # fork process
 ```sh
 git fetch upstream
+git pull
 git merge upstream/main
 ```
 ---
